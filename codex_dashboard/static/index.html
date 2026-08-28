@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Codex Control Center — local-first observability and control dashboard">
+  <title>Codex Control Center</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div>
+          <strong>Codex</strong>
+          <small>Control Center</small>
+        </div>
+      </div>
+
+      <nav class="nav" id="nav">
+        <button class="nav-item active" data-view="overview"><span class="nav-icon">⌂</span><span>Overview</span></button>
+        <button class="nav-item" data-view="attention"><span class="nav-icon">!</span><span>Need Attention</span><b id="attentionBadge" class="nav-badge hidden">0</b></button>
+        <div class="nav-label">Work</div>
+        <button class="nav-item" data-view="table"><span class="nav-icon">≡</span><span>All Tasks</span></button>
+        <button class="nav-item" data-view="board"><span class="nav-icon">▦</span><span>Board</span></button>
+        <button class="nav-item" data-view="completed"><span class="nav-icon">✓</span><span>Completed</span></button>
+        <div class="nav-label">System</div>
+        <button class="nav-item" data-view="settings"><span class="nav-icon">⚙</span><span>Settings</span></button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="connection-card">
+          <span id="connectionDot" class="status-dot pending"></span>
+          <div><strong id="connectionText">Connecting</strong><small id="connectionDetail">Waiting for API</small></div>
+        </div>
+        <button id="scanButton" class="button button-ghost button-full">Scan now</button>
+      </div>
+    </aside>
+
+    <section class="workspace">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="viewEyebrow">Workspace pulse</p>
+          <h1 id="viewTitle">Overview</h1>
+        </div>
+        <div class="topbar-actions">
+          <label class="searchbox">
+            <span aria-hidden="true">⌕</span>
+            <input id="globalSearch" type="search" placeholder="Search task, repo, session…" autocomplete="off">
+            <kbd>/</kbd>
+          </label>
+          <button id="demoButton" class="button button-secondary">Load demo</button>
+          <button id="newTaskButton" class="button button-primary"><span>＋</span> New task</button>
+        </div>
+      </header>
+
+      <main id="main" class="main" tabindex="-1">
+        <div id="loadingState" class="loading-state">
+          <div class="loader"></div>
+          <p>Building the operational picture…</p>
+        </div>
+      </main>
+    </section>
+  </div>
+
+  <aside id="taskDrawer" class="drawer" aria-hidden="true" aria-label="Task details">
+    <div class="drawer-backdrop" data-close-drawer></div>
+    <section class="drawer-panel">
+      <header class="drawer-header">
+        <div>
+          <div class="drawer-kicker" id="drawerKicker">Session</div>
+          <h2 id="drawerTitle">Task detail</h2>
+        </div>
+        <button class="icon-button" data-close-drawer aria-label="Close task details">×</button>
+      </header>
+      <div id="drawerBody" class="drawer-body"></div>
+    </section>
+  </aside>
+
+  <dialog id="newTaskDialog" class="dialog">
+    <form id="newTaskForm" method="dialog">
+      <div class="dialog-header">
+        <div><p class="eyebrow">Managed Codex</p><h2>Create task</h2></div>
+        <button type="button" class="icon-button" data-close-dialog="newTaskDialog">×</button>
+      </div>
+      <div class="form-grid">
+        <label class="field field-wide"><span>Prompt <b>*</b></span><textarea name="prompt" rows="7" required placeholder="Describe the result Codex should deliver…"></textarea></label>
+        <label class="field"><span>Title</span><input name="title" placeholder="Derived from prompt when empty"></label>
+        <label class="field"><span>Model</span><input name="model" placeholder="Use Codex default"></label>
+        <label class="field field-wide"><span>Working directory <b>*</b></span><input name="cwd" required placeholder="/path/to/repository"></label>
+        <label class="switch-row field-wide"><input name="start" type="checkbox" checked><span class="switch"></span><span><strong>Start immediately</strong><small>Disable to create an idle task draft without launching Codex.</small></span></label>
+      </div>
+      <div id="newTaskError" class="form-error hidden"></div>
+      <div class="dialog-actions"><button type="button" class="button button-ghost" data-close-dialog="newTaskDialog">Cancel</button><button class="button button-primary" value="submit">Create task</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="instructionDialog" class="dialog dialog-small">
+    <form id="instructionForm" method="dialog">
+      <input type="hidden" name="session_id">
+      <div class="dialog-header">
+        <div><p class="eyebrow">Continue conversation</p><h2>Send instruction</h2></div>
+        <button type="button" class="icon-button" data-close-dialog="instructionDialog">×</button>
+      </div>
+      <label class="field"><span>Instruction <b>*</b></span><textarea name="message" rows="6" required placeholder="Add context, answer the question, or redirect the work…"></textarea></label>
+      <div id="instructionError" class="form-error hidden"></div>
+      <div class="dialog-actions"><button type="button" class="button button-ghost" data-close-dialog="instructionDialog">Cancel</button><button class="button button-primary" value="submit">Send</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="completeDialog" class="dialog dialog-small">
+    <form id="completeForm" method="dialog">
+      <input type="hidden" name="session_id">
+      <div class="dialog-header">
+        <div><p class="eyebrow">Explicit terminal state</p><h2>Mark complete</h2></div>
+        <button type="button" class="icon-button" data-close-dialog="completeDialog">×</button>
+      </div>
+      <p class="dialog-copy">Completion is never inferred from a process exit. Confirm that the requested result is actually delivered.</p>
+      <label class="field"><span>Completion summary</span><textarea name="summary" rows="5" placeholder="What was delivered and how was it verified?"></textarea></label>
+      <div class="dialog-actions"><button type="button" class="button button-ghost" data-close-dialog="completeDialog">Cancel</button><button class="button button-success" value="submit">Confirm complete</button></div>
+    </form>
+  </dialog>
+
+  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
