@@ -1,0 +1,187 @@
+name: Finalize verified repository
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/finalize-repository.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: finalize-codex-dashboard
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out latest main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply final correctness fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          config = Path('codex_dashboard/config.py')
+          text = config.read_text(encoding='utf-8')
+          marker = 'poll_interval must be positive'
+          if marker not in text:
+              needle = '    def validate(self) -> None:\n'
+              checks = (
+                  '    def validate(self) -> None:\n'
+                  '        if self.poll_interval <= 0:\n'
+                  '            raise ValueError("poll_interval must be positive")\n'
+                  '        if self.stale_seconds <= 0:\n'
+                  '            raise ValueError("stale_seconds must be positive")\n'
+                  '        if self.command_hung_seconds <= 0:\n'
+                  '            raise ValueError("command_hung_seconds must be positive")\n'
+                  '        if self.git_refresh_seconds <= 0:\n'
+                  '            raise ValueError("git_refresh_seconds must be positive")\n'
+              )
+              if needle not in text:
+                  raise SystemExit('could not locate Config.validate')
+              text = text.replace(needle, checks, 1)
+              config.write_text(text, encoding='utf-8')
+
+          app = Path('codex_dashboard/static/app.js')
+          text = app.read_text(encoding='utf-8')
+          old_instruction = '''  function openInstruction(task) {
+              const dialog = $('#instructionDialog');
+              dialog.elements.session_id.value = task.id;
+              dialog.elements.message.value = '';
+              $('#instructionError').classList.add('hidden');
+              dialog.showModal();
+              setTimeout(() => dialog.elements.message.focus(), 30);
+            }'''
+          new_instruction = '''  function openInstruction(task) {
+              const dialog = $('#instructionDialog');
+              const form = $('#instructionForm');
+              form.elements.session_id.value = task.id;
+              form.elements.message.value = '';
+              $('#instructionError').classList.add('hidden');
+              dialog.showModal();
+              setTimeout(() => form.elements.message.focus(), 30);
+            }'''
+          if old_instruction in text:
+              text = text.replace(old_instruction, new_instruction, 1)
+          old_complete = '''  function openComplete(task) {
+              const dialog = $('#completeDialog');
+              dialog.elements.session_id.value = task.id;
+              dialog.elements.summary.value = task.summary || '';
+              dialog.showModal();
+            }'''
+          new_complete = '''  function openComplete(task) {
+              const dialog = $('#completeDialog');
+              const form = $('#completeForm');
+              form.elements.session_id.value = task.id;
+              form.elements.summary.value = task.summary || '';
+              dialog.showModal();
+            }'''
+          if old_complete in text:
+              text = text.replace(old_complete, new_complete, 1)
+          text = text.replace(
+              "item.innerHTML = `<div></div><div><strong>${escapeHtml(title)}</strong>${message ? `<span>${escapeHtml(message)}</span>` : ''}</div>`;",
+              "item.innerHTML = `<div><strong>${escapeHtml(title)}</strong>${message ? `<span>${escapeHtml(message)}</span>` : ''}</div>`;",
+          )
+          app.write_text(text, encoding='utf-8')
+
+          cli = Path('codex_dashboard/cli.py')
+          text = cli.read_text(encoding='utf-8')
+          replacement = '''def _serve_command(args: argparse.Namespace) -> int:
+              config = _config(args)
+              display_host = "127.0.0.1" if config.host in {"0.0.0.0", "::"} else config.host
+              url = f"http://{display_host}:{config.port}/"
+              if config.token:
+                  url += f"?token={config.token}"
+              print(f"Codex Control Center: {url}")
+              print(f"Data: {config.database_path}")
+              if not args.no_browser:
+                  timer = threading.Timer(0.5, lambda: webbrowser.open(url))
+                  timer.daemon = True
+                  timer.start()
+              try:
+                  serve(config)
+              except KeyboardInterrupt:
+                  print("\\nStopping…", file=sys.stderr)
+                  return 130
+              return 0
+
+          '''
+          pattern = re.compile(r'def _serve_command\(args: argparse\.Namespace\) -> int:\n.*?(?=def main\()', re.S)
+          match = pattern.search(text)
+          if match and 'thread.join(1)' in match.group(0):
+              text = text[:match.start()] + replacement + text[match.end():]
+              cli.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Promote complete README and remove one-time bootstraps
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f README.zh-CN.md
+          cp README.zh-CN.md README.md
+          rm -f .github/workflows/bootstrap-source.yml
+          rm -f .github/workflows/finalize-repository.yml
+          rm -f tools/bootstrap_full_repo.py
+
+      - name: Install editable package
+        run: python -m pip install --disable-pip-version-check -e .
+
+      - name: Compile Python
+        run: python -m compileall -q codex_dashboard tests
+
+      - name: Run complete test suite
+        run: python -m unittest discover -s tests -v
+
+      - name: Validate JavaScript
+        run: node --check codex_dashboard/static/app.js
+
+      - name: Smoke-test CLI
+        run: |
+          codex-dashboard --help >/dev/null
+          python -m codex_dashboard --help >/dev/null
+
+      - name: Write verification record
+        shell: bash
+        run: |
+          set -euo pipefail
+          timestamp="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          cat > docs/VERIFICATION.md <<EOF
+          # Verification
+
+          This repository tree passed the release gate at **${timestamp}** in GitHub Actions run **${GITHUB_RUN_ID}**.
+
+          ## Gates
+
+          1. \`python -m compileall -q codex_dashboard tests\`
+          2. \`python -m unittest discover -s tests -v\`
+          3. \`node --check codex_dashboard/static/app.js\`
+          4. \`codex-dashboard --help\`
+          5. \`python -m codex_dashboard --help\`
+
+          The tests cover parser compatibility, event-store idempotency, JSONL half-lines and rewrites, conservative completion, plan-only progress, replan regression, alert escalation, continuing command output, HTTP CRUD, SSE, token authentication, settings validation, Demo data, and dashboard-owned process controls.
+          EOF
+
+      - name: Commit verified implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No finalization changes were required.'
+            exit 0
+          fi
+          git commit -m 'feat: finalize verified Codex Control Center v1.0'
+          git push origin HEAD:main
