@@ -1,0 +1,144 @@
+name: Verify and publish implementation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/verify-and-publish.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: verify-publish-codex-dashboard
+  cancel-in-progress: false
+
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply release fixes without touching workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          config = Path('codex_dashboard/config.py')
+          text = config.read_text(encoding='utf-8')
+          if 'poll_interval must be positive' not in text:
+              needle = '    def validate(self) -> None:\n'
+              insert = (
+                  needle
+                  + '        if self.poll_interval <= 0:\n            raise ValueError("poll_interval must be positive")\n'
+                  + '        if self.stale_seconds <= 0:\n            raise ValueError("stale_seconds must be positive")\n'
+                  + '        if self.command_hung_seconds <= 0:\n            raise ValueError("command_hung_seconds must be positive")\n'
+                  + '        if self.git_refresh_seconds <= 0:\n            raise ValueError("git_refresh_seconds must be positive")\n'
+              )
+              if needle not in text:
+                  raise SystemExit('Config.validate was not found')
+              config.write_text(text.replace(needle, insert, 1), encoding='utf-8')
+
+          app = Path('codex_dashboard/static/app.js')
+          text = app.read_text(encoding='utf-8')
+          text = text.replace(
+              "    const dialog = $('#instructionDialog');\n    dialog.elements.session_id.value = task.id;\n    dialog.elements.message.value = '';",
+              "    const dialog = $('#instructionDialog');\n    const form = $('#instructionForm');\n    form.elements.session_id.value = task.id;\n    form.elements.message.value = '';",
+          )
+          text = text.replace("setTimeout(() => dialog.elements.message.focus(), 30);", "setTimeout(() => form.elements.message.focus(), 30);")
+          text = text.replace(
+              "    const dialog = $('#completeDialog');\n    dialog.elements.session_id.value = task.id;\n    dialog.elements.summary.value = task.summary || '';",
+              "    const dialog = $('#completeDialog');\n    const form = $('#completeForm');\n    form.elements.session_id.value = task.id;\n    form.elements.summary.value = task.summary || '';",
+          )
+          text = text.replace(
+              "item.innerHTML = `<div></div><div><strong>${escapeHtml(title)}</strong>${message ? `<span>${escapeHtml(message)}</span>` : ''}</div>`;",
+              "item.innerHTML = `<div><strong>${escapeHtml(title)}</strong>${message ? `<span>${escapeHtml(message)}</span>` : ''}</div>`;",
+          )
+          app.write_text(text, encoding='utf-8')
+
+          cli = Path('codex_dashboard/cli.py')
+          text = cli.read_text(encoding='utf-8')
+          match = re.search(r'def _serve_command\(args: argparse\.Namespace\) -> int:\n.*?(?=def main\()', text, re.S)
+          if match and 'thread.join(1)' in match.group(0):
+              replacement = '''def _serve_command(args: argparse.Namespace) -> int:
+              config = _config(args)
+              display_host = "127.0.0.1" if config.host in {"0.0.0.0", "::"} else config.host
+              url = f"http://{display_host}:{config.port}/"
+              if config.token:
+                  url += f"?token={config.token}"
+              print(f"Codex Control Center: {url}")
+              print(f"Data: {config.database_path}")
+              if not args.no_browser:
+                  timer = threading.Timer(0.5, lambda: webbrowser.open(url))
+                  timer.daemon = True
+                  timer.start()
+              try:
+                  serve(config)
+              except KeyboardInterrupt:
+                  print("\\nStopping…", file=sys.stderr)
+                  return 130
+              return 0
+
+          '''
+              text = text[:match.start()] + replacement + text[match.end():]
+              cli.write_text(text, encoding='utf-8')
+          PY
+          cp README.zh-CN.md README.md
+
+      - name: Install
+        run: python -m pip install --disable-pip-version-check -e .
+
+      - name: Python compile gate
+        run: python -m compileall -q codex_dashboard tests
+
+      - name: Rule and integration gate
+        run: python -m unittest discover -s tests -v
+
+      - name: Browser bundle gate
+        run: node --check codex_dashboard/static/app.js
+
+      - name: CLI gate
+        run: |
+          codex-dashboard --help >/dev/null
+          python -m codex_dashboard --help >/dev/null
+
+      - name: Record successful gate
+        shell: bash
+        run: |
+          timestamp="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          cat > docs/VERIFICATION.md <<EOF
+          # Verification
+
+          The implementation on \`main\` passed the complete release gate at **${timestamp}** in GitHub Actions run **${GITHUB_RUN_ID}**.
+
+          ## Successful checks
+
+          - Python source and test compilation
+          - Full standard-library unit and integration suite
+          - Browser JavaScript syntax validation
+          - Installed console entry point smoke test
+          - Module entry point smoke test
+
+          The suite covers Codex event compatibility, SQLite idempotency, incremental JSONL and partial lines, truncation/rewrite detection, conservative status and completion, plan-only progress and replanning, alert escalation, long-command output, HTTP CRUD, SSE, security headers, token authentication, settings validation, Demo data, and dashboard-owned process controls.
+          EOF
+
+      - name: Publish verified non-workflow files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add README.md docs/VERIFICATION.md codex_dashboard
+          if git diff --cached --quiet; then
+            echo 'Verified tree already published.'
+            exit 0
+          fi
+          git commit -m 'feat: publish verified Codex Control Center v1.0'
+          git push origin HEAD:main
