@@ -51,10 +51,12 @@ jobs:
           test -s .release/bootstrap_20260829_v020.py
           python .release/bootstrap_20260829_v020.py
 
-      - name: Prevent detail route from shadowing actions and events
+      - name: Apply release correctness fixes
         shell: python
         run: |
           from pathlib import Path
+
+          # Keep the catch-all detail route from shadowing nested action/event routes.
           api = Path('src/codex_control_center/api.py')
           js = Path('src/codex_control_center/static/app.js')
           text = api.read_text(encoding='utf-8')
@@ -70,6 +72,41 @@ jobs:
           )
           js.write_text(script, encoding='utf-8')
 
+          # Legacy rollout envelopes place session_meta fields under payload.
+          # Unwrapping that envelope preserves the explicit session id and title.
+          parser = Path('codex_dashboard/parser.py')
+          parser_text = parser.read_text(encoding='utf-8')
+          old_envelopes = '"event_msg", "response_item", "rollout_item", "event", "item"\n        }:'
+          new_envelopes = '"event_msg", "response_item", "rollout_item", "event", "item", "session_meta"\n        }:'
+          if old_envelopes in parser_text:
+              parser_text = parser_text.replace(old_envelopes, new_envelopes, 1)
+          elif new_envelopes not in parser_text:
+              raise RuntimeError('legacy session_meta envelope patch no longer matches parser.py')
+          parser.write_text(parser_text, encoding='utf-8')
+
+          # Runtime settings must reject non-positive collector intervals.
+          config = Path('codex_dashboard/config.py')
+          config_text = config.read_text(encoding='utf-8')
+          validation_anchor = '''        if self.max_event_bytes < 1024:
+              raise ValueError("max_event_bytes is too small")
+          '''
+          validation_block = '''        if self.poll_interval <= 0:
+              raise ValueError("poll_interval must be greater than 0")
+          if self.stale_seconds <= 0:
+              raise ValueError("stale_seconds must be greater than 0")
+          if self.command_hung_seconds <= 0:
+              raise ValueError("command_hung_seconds must be greater than 0")
+          if self.git_refresh_seconds <= 0:
+              raise ValueError("git_refresh_seconds must be greater than 0")
+          if self.max_event_bytes < 1024:
+              raise ValueError("max_event_bytes is too small")
+          '''
+          if 'poll_interval must be greater than 0' not in config_text:
+              if validation_anchor not in config_text:
+                  raise RuntimeError('settings validation patch no longer matches config.py')
+              config_text = config_text.replace(validation_anchor, validation_block, 1)
+          config.write_text(config_text, encoding='utf-8')
+
       - name: Run final release gate
         shell: bash
         run: |
@@ -82,8 +119,10 @@ jobs:
           grep -Rqs 'BatchMode=yes' src/codex_control_center
           grep -Rqs 'context_percent\|context_window' src/codex_control_center
           grep -Rqs 'worktree' src/codex_control_center
+          grep -q 'session_meta' codex_dashboard/parser.py
+          grep -q 'poll_interval must be greater than 0' codex_dashboard/config.py
           python -m pip install -e '.[dev]'
-          python -m compileall -q src
+          python -m compileall -q codex_dashboard src
           node --check src/codex_control_center/static/app.js
           pytest -q
 
