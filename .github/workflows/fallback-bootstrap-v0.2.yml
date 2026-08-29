@@ -1,0 +1,49 @@
+name: Publish v0.2.0 fallback source tree
+
+on:
+  push:
+    paths:
+      - '.release/bootstrap_20260829_v020.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect an already complete v0.2.0 tree
+        id: detect
+        shell: bash
+        run: |
+          if grep -q 'version = "0.2.0"' pyproject.toml 2>/dev/null \
+             && test -f src/codex_control_center/api.py \
+             && test -f docs/COMMUNITY_RESEARCH_2026-08.md; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Materialize guarded fallback tree
+        if: steps.detect.outputs.ready != 'true'
+        run: python .release/bootstrap_20260829_v020.py
+      - name: Verify Python source
+        run: |
+          python -m compileall -q src
+          python -m pip install -e '.[dev]'
+          pytest -q
+      - name: Commit and tag
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "feat: publish Codex Dashboard v0.2.0"
+            git push origin HEAD:main
+          fi
+          git tag -f -a v0.2.0 -m 'Codex Dashboard v0.2.0'
+          git push origin v0.2.0 --force
