@@ -1,0 +1,118 @@
+name: Publish Codex Dashboard v0.2.0
+
+on:
+  push:
+    paths:
+      - '.release/publish-v0.2.0-trigger-*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: codex-dashboard-v0.2.0-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect complete v0.2.0 source tree
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          complete=false
+          if grep -q 'version = "0.2.0"' pyproject.toml 2>/dev/null \
+             && test -f src/codex_control_center/api.py \
+             && test -f src/codex_control_center/static/app.js \
+             && test -f docs/COMMUNITY_RESEARCH_2026-08.md \
+             && grep -q 'zh-CN' src/codex_control_center/static/app.js \
+             && grep -q 'ja-JP' src/codex_control_center/static/app.js \
+             && grep -q 'ko-KR' src/codex_control_center/static/app.js \
+             && grep -Rqs 'StrictHostKeyChecking' src/codex_control_center \
+             && grep -Rqs 'context_percent\|context_window' src/codex_control_center; then
+            complete=true
+          fi
+          echo "complete=$complete" >> "$GITHUB_OUTPUT"
+
+      - name: Materialize guarded fallback only when needed
+        if: steps.detect.outputs.complete != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s .release/bootstrap_20260829_v020.py
+          python .release/bootstrap_20260829_v020.py
+
+      - name: Validate release source
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'version = "0.2.0"' pyproject.toml
+          grep -q 'zh-CN' src/codex_control_center/static/app.js
+          grep -q 'ja-JP' src/codex_control_center/static/app.js
+          grep -q 'ko-KR' src/codex_control_center/static/app.js
+          grep -Rqs 'StrictHostKeyChecking' src/codex_control_center
+          grep -Rqs 'BatchMode=yes' src/codex_control_center
+          grep -Rqs 'context_percent\|context_window' src/codex_control_center
+          grep -Rqs 'worktree' src/codex_control_center
+          python -m compileall -q src
+          node --check src/codex_control_center/static/app.js
+
+      - name: Install and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+          pytest -q
+
+      - name: Write publication marker
+        shell: python
+        run: |
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          marker = {
+              "version": "0.2.0",
+              "published_at": datetime.now(timezone.utc).isoformat(),
+              "source_gate": "passed",
+              "python_compile": "passed",
+              "javascript_syntax": "passed",
+              "tests": "passed",
+              "languages": ["en-US", "zh-CN", "ja-JP", "ko-KR"],
+              "ssh_auth": ["identity-file", "ssh-agent"],
+              "password_storage": False,
+              "strict_host_key_checking_default": True
+          }
+          Path("PUBLISH_COMPLETE_v0.2.0.json").write_text(
+              json.dumps(marker, indent=2, ensure_ascii=False) + "\n",
+              encoding="utf-8",
+          )
+
+      - name: Commit source and marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "feat: publish multilingual SSH fleet management v0.2.0"
+            git push origin HEAD:main
+          fi
+
+      - name: Publish release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags
+          git checkout main
+          git reset --hard origin/main
+          git tag -f -a v0.2.0 -m "Codex Dashboard v0.2.0"
+          git push origin refs/tags/v0.2.0 --force
