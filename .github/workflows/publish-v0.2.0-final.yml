@@ -87,20 +87,18 @@ jobs:
           # Runtime settings must reject non-positive collector intervals.
           config = Path('codex_dashboard/config.py')
           config_text = config.read_text(encoding='utf-8')
-          validation_anchor = '''        if self.max_event_bytes < 1024:
-              raise ValueError("max_event_bytes is too small")
-          '''
-          validation_block = '''        if self.poll_interval <= 0:
-              raise ValueError("poll_interval must be greater than 0")
-          if self.stale_seconds <= 0:
-              raise ValueError("stale_seconds must be greater than 0")
-          if self.command_hung_seconds <= 0:
-              raise ValueError("command_hung_seconds must be greater than 0")
-          if self.git_refresh_seconds <= 0:
-              raise ValueError("git_refresh_seconds must be greater than 0")
-          if self.max_event_bytes < 1024:
-              raise ValueError("max_event_bytes is too small")
-          '''
+          validation_anchor = '        if self.max_event_bytes < 1024:\n            raise ValueError("max_event_bytes is too small")'
+          validation_block = (
+              '        if self.poll_interval <= 0:\n'
+              '            raise ValueError("poll_interval must be greater than 0")\n'
+              '        if self.stale_seconds <= 0:\n'
+              '            raise ValueError("stale_seconds must be greater than 0")\n'
+              '        if self.command_hung_seconds <= 0:\n'
+              '            raise ValueError("command_hung_seconds must be greater than 0")\n'
+              '        if self.git_refresh_seconds <= 0:\n'
+              '            raise ValueError("git_refresh_seconds must be greater than 0")\n'
+              + validation_anchor
+          )
           if 'poll_interval must be greater than 0' not in config_text:
               if validation_anchor not in config_text:
                   raise RuntimeError('settings validation patch no longer matches config.py')
