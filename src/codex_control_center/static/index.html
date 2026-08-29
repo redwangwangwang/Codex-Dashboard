@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Codex Control Center</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header>
+    <div><strong>Codex Control Center</strong><span class="version">v0.2.0</span></div>
+    <nav>
+      <button data-view="sessions" class="active"></button>
+      <button data-view="attention"></button>
+      <button data-view="hosts"></button>
+      <button data-view="settings"></button>
+    </nav>
+  </header>
+  <main>
+    <section id="sessions" class="view active">
+      <div class="toolbar">
+        <input id="search" type="search" autocomplete="off">
+        <select id="host-filter"><option value=""></option></select>
+        <select id="state-filter"><option value=""></option><option value="running">running</option><option value="completed">completed</option><option value="failed">failed</option></select>
+        <button id="refresh"></button>
+      </div>
+      <div id="summary" class="summary"></div>
+      <div class="table-wrap"><table><thead><tr><th data-i18n="title"></th><th data-i18n="host"></th><th data-i18n="state"></th><th data-i18n="repository"></th><th data-i18n="context"></th><th data-i18n="updated"></th></tr></thead><tbody id="session-rows"></tbody></table></div>
+      <div class="pager"><button id="prev">‹</button><span id="page-info"></span><button id="next">›</button></div>
+    </section>
+
+    <section id="attention" class="view"><div id="attention-list" class="cards"></div></section>
+
+    <section id="hosts" class="view">
+      <div class="section-head"><h2 data-i18n="remoteHosts"></h2><button id="add-host" data-i18n="addHost"></button></div>
+      <div id="host-list" class="cards"></div>
+    </section>
+
+    <section id="settings" class="view">
+      <form id="settings-form" class="panel form-grid">
+        <label><span data-i18n="language"></span><select id="locale"><option value="en-US">English</option><option value="zh-CN">简体中文</option><option value="ja-JP">日本語</option><option value="ko-KR">한국어</option></select></label>
+        <label><span data-i18n="pageSize"></span><input id="page-size" type="number" min="10" max="200"></label>
+        <label><span data-i18n="contextThreshold"></span><input id="context-warning" type="number" min="50" max="99"></label>
+        <label><span data-i18n="rateThreshold"></span><input id="rate-warning" type="number" min="50" max="99"></label>
+        <label class="check"><input id="notifications" type="checkbox"><span data-i18n="browserNotifications"></span></label>
+        <button type="submit" data-i18n="save"></button>
+      </form>
+    </section>
+  </main>
+
+  <dialog id="host-dialog">
+    <form id="host-form" method="dialog" class="form-grid">
+      <input id="host-id" type="hidden">
+      <h2 data-i18n="sshHost"></h2>
+      <label><span data-i18n="name"></span><input id="host-name" required maxlength="80"></label>
+      <label><span data-i18n="hostname"></span><input id="hostname" required></label>
+      <label><span data-i18n="username"></span><input id="username" required></label>
+      <label><span data-i18n="port"></span><input id="port" type="number" value="22" min="1" max="65535"></label>
+      <label><span data-i18n="identityFile"></span><input id="identity-file" placeholder="~/.ssh/id_ed25519"></label>
+      <label><span data-i18n="jumpHost"></span><input id="jump-host" placeholder="bastion.example.com"></label>
+      <label><span>CODEX_HOME</span><input id="codex-home" value="~/.codex"></label>
+      <label><span data-i18n="workspaceRoots"></span><textarea id="workspace-roots" rows="3"></textarea></label>
+      <label class="check"><input id="host-enabled" type="checkbox" checked><span data-i18n="enabled"></span></label>
+      <label class="check"><input id="enroll-key" type="checkbox"><span data-i18n="enrollHostKey"></span></label>
+      <div class="dialog-actions"><button type="button" id="cancel-host" data-i18n="cancel"></button><button value="save" data-i18n="save"></button></div>
+    </form>
+  </dialog>
+
+  <dialog id="detail-dialog"><div id="detail"></div><button id="close-detail" data-i18n="close"></button></dialog>
+  <div id="toast"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

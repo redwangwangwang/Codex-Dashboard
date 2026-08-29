@@ -103,7 +103,7 @@ def _unwrap(raw: dict[str, Any]) -> tuple[str, dict[str, Any], str]:
             current = current["item"]
             continue
         if isinstance(current.get("payload"), dict) and str(current_type or "").lower() in {
-            "event_msg", "response_item", "rollout_item", "event", "item"
+            "event_msg", "response_item", "rollout_item", "event", "item", "session_meta"
         }:
             current = current["payload"]
             continue

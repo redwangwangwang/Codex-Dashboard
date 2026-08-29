@@ -95,6 +95,14 @@ class Config:
             raise ValueError("port must be between 1 and 65535")
         if self.requires_token and not self.token:
             raise ValueError("CODEX_DASHBOARD_TOKEN is required when binding outside loopback")
+        if self.poll_interval <= 0:
+            raise ValueError("poll_interval must be greater than 0")
+        if self.stale_seconds <= 0:
+            raise ValueError("stale_seconds must be greater than 0")
+        if self.command_hung_seconds <= 0:
+            raise ValueError("command_hung_seconds must be greater than 0")
+        if self.git_refresh_seconds <= 0:
+            raise ValueError("git_refresh_seconds must be greater than 0")
         if self.max_event_bytes < 1024:
             raise ValueError("max_event_bytes is too small")
 

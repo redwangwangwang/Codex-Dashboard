@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "verified_at": "2026-08-29T18:34:42.670107+00:00",
+  "source_gate": "passed",
+  "python_compile": "passed",
+  "javascript_syntax": "passed",
+  "tests": "passed",
+  "languages": [
+    "en-US",
+    "zh-CN",
+    "ja-JP",
+    "ko-KR"
+  ],
+  "ssh_auth": [
+    "identity-file",
+    "ssh-agent"
+  ],
+  "password_storage": false,
+  "strict_host_key_checking_default": true,
+  "remote_session_identity": "host-scoped",
+  "progress_semantics": "unknown-when-no-denominator"
+}
