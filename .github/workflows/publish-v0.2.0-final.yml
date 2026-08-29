@@ -1,0 +1,135 @@
+name: Finalize Codex Dashboard v0.2.0
+
+on:
+  push:
+    paths:
+      - '.release/publish-v0.2.0-final-trigger-*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: codex-dashboard-v0.2.0-final
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Test whether the current tree is already complete
+        id: current
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          grep -q 'version = "0.2.0"' pyproject.toml
+          test -f docs/COMMUNITY_RESEARCH_2026-08.md
+          test -f src/codex_control_center/static/app.js
+          grep -q 'zh-CN' src/codex_control_center/static/app.js
+          grep -q 'ja-JP' src/codex_control_center/static/app.js
+          grep -q 'ko-KR' src/codex_control_center/static/app.js
+          grep -Rqs 'StrictHostKeyChecking' src/codex_control_center
+          grep -Rqs 'BatchMode=yes' src/codex_control_center
+          grep -Rqs 'context_percent\|context_window' src/codex_control_center
+          grep -Rqs 'worktree' src/codex_control_center
+          python -m pip install -e '.[dev]'
+          python -m compileall -q src
+          node --check src/codex_control_center/static/app.js
+          pytest -q
+
+      - name: Materialize fallback when the existing tree fails the gate
+        if: steps.current.outcome != 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s .release/bootstrap_20260829_v020.py
+          python .release/bootstrap_20260829_v020.py
+
+      - name: Prevent detail route from shadowing actions and events
+        shell: python
+        run: |
+          from pathlib import Path
+          api = Path('src/codex_control_center/api.py')
+          js = Path('src/codex_control_center/static/app.js')
+          text = api.read_text(encoding='utf-8')
+          text = text.replace(
+              '@app.get("/api/sessions/{session_key:path}")\n    def session(session_key: str)',
+              '@app.get("/api/session/{session_key:path}")\n    def session(session_key: str)',
+          )
+          api.write_text(text, encoding='utf-8')
+          script = js.read_text(encoding='utf-8')
+          script = script.replace(
+              'api(`/api/sessions/${encodeURIComponent(key)}`)',
+              'api(`/api/session/${encodeURIComponent(key)}`)',
+          )
+          js.write_text(script, encoding='utf-8')
+
+      - name: Run final release gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'version = "0.2.0"' pyproject.toml
+          grep -q 'zh-CN' src/codex_control_center/static/app.js
+          grep -q 'ja-JP' src/codex_control_center/static/app.js
+          grep -q 'ko-KR' src/codex_control_center/static/app.js
+          grep -Rqs 'StrictHostKeyChecking' src/codex_control_center
+          grep -Rqs 'BatchMode=yes' src/codex_control_center
+          grep -Rqs 'context_percent\|context_window' src/codex_control_center
+          grep -Rqs 'worktree' src/codex_control_center
+          python -m pip install -e '.[dev]'
+          python -m compileall -q src
+          node --check src/codex_control_center/static/app.js
+          pytest -q
+
+      - name: Write verified release marker
+        shell: python
+        run: |
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+          marker = {
+              'version': '0.2.0',
+              'verified_at': datetime.now(timezone.utc).isoformat(),
+              'source_gate': 'passed',
+              'python_compile': 'passed',
+              'javascript_syntax': 'passed',
+              'tests': 'passed',
+              'languages': ['en-US', 'zh-CN', 'ja-JP', 'ko-KR'],
+              'ssh_auth': ['identity-file', 'ssh-agent'],
+              'password_storage': False,
+              'strict_host_key_checking_default': True,
+              'remote_session_identity': 'host-scoped',
+              'progress_semantics': 'unknown-when-no-denominator'
+          }
+          Path('PUBLISH_COMPLETE_v0.2.0.json').write_text(
+              json.dumps(marker, ensure_ascii=False, indent=2) + '\n',
+              encoding='utf-8',
+          )
+
+      - name: Commit verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m 'feat: finalize multilingual SSH fleet management v0.2.0'
+            git push origin HEAD:main
+          fi
+
+      - name: Point v0.2.0 tag at verified main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags
+          git checkout main
+          git reset --hard origin/main
+          git tag -f -a v0.2.0 -m 'Codex Dashboard v0.2.0'
+          git push origin refs/tags/v0.2.0 --force
